@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LUBRITORQUE | 100-Sample Training & Multi-Tool Grease Diagnostics</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card: #151f32;
+      --subcard: #0f172a;
+      --border: #26334d;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --primary: #2563eb;
+      --fresh: #10b981;
+      --semi: #f59e0b;
+      --degraded: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 1220px;
+      margin: 28px auto;
+      padding: 0 20px 44px;
+      line-height: 1.5;
+    }
+
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 14px; padding-bottom: 18px; margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 { margin: 0; font-size: 1.7rem; letter-spacing: 0.4px; }
+    .header p { margin: 4px 0 0; color: var(--muted); font-size: 0.92rem; }
+    .status-group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
+      background: var(--card); border: 1px solid var(--border);
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--fresh); }
+    .dot.running { background: var(--semi); animation: pulse 0.9s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .grid-2 { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-bottom: 22px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }
+    @media (max-width: 960px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 560px) { .grid-4 { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 22px; margin-bottom: 22px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+    .card h2 {
+      margin: 0 0 16px 0; font-size: 1.02rem; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--accent); display: flex;
+      justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+    }
+
+    label { display: block; font-size: 0.88rem; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+    select, input[type="text"] {
+      width: 100%; padding: 12px 14px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--subcard);
+      color: var(--text); font-size: 0.95rem; margin-bottom: 14px;
+    }
+
+    .btn-row { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; margin-bottom: 16px; }
+    button, .file-btn {
+      padding: 13px 16px; border: none; border-radius: 9px; font-weight: 700;
+      font-size: 0.92rem; cursor: pointer; text-align: center; transition: opacity 0.15s;
+    }
+    button:hover, .file-btn:hover { opacity: 0.92; }
+    .btn-start { background: var(--primary); color: #fff; }
+    .btn-stop { background: var(--degraded); color: #fff; }
+    .btn-save { background: var(--fresh); color: #052e16; width: 100%; margin-top: 12px; }
+    .btn-csv { background: rgba(16, 185, 129, 0.18); color: var(--fresh); border: 1px solid rgba(16, 185, 129, 0.4); padding: 8px 13px; font-size: 0.82rem; }
+    .btn-clear { background: rgba(239, 68, 68, 0.15); color: var(--degraded); border: 1px solid rgba(239, 68, 68, 0.4); padding: 8px 13px; font-size: 0.82rem; }
+
+    /* 100-SAMPLE PROGRESS BARS */
+    .train-box {
+      background: var(--subcard); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .train-top { display: flex; justify-content: space-between; font-size: 0.86rem; margin-bottom: 6px; }
+    .bar-bg { width: 100%; height: 8px; background: #1e293b; border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; width: 0%; transition: width 0.3s ease; }
+
+    .thresh-banner {
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+      background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 9px; padding: 10px 14px; font-size: 0.82rem; margin-top: 10px;
+    }
+
+    .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+    .metric-box {
+      background: var(--subcard); padding: 12px; border-radius: 9px;
+      border: 1px solid var(--border); text-align: center;
+    }
+    .metric-box .lbl { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+    .metric-box .val { font-size: 1.18rem; font-weight: 700; margin-top: 4px; }
+
+    /* PHONE CAMERA UPLOAD */
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: 12px; padding: 18px;
+      text-align: center; background: var(--subcard); margin-bottom: 14px;
+    }
+    .file-btn {
+      display: inline-block; background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff; padding: 12px 20px; border-radius: 9px;
+    }
+    #photoPreview {
+      max-width: 100%; max-height: 200px; border-radius: 10px;
+      margin-top: 12px; display: none; border: 1px solid var(--border);
+    }
+
+    .calib-item {
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--subcard); padding: 10px 14px; border-radius: 9px;
+      border: 1px solid var(--border); margin-bottom: 8px; font-size: 0.88rem;
+    }
+    .pill-state { padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
+    .st-yes { background: rgba(16, 185, 129, 0.18); color: var(--fresh); }
+    .st-no { background: rgba(148, 163, 184, 0.15); color: var(--muted); }
+
+    /* 4-TOOL CARDS */
+    .tool-card {
+      background: var(--subcard); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px; display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .tool-header { font-size: 0.76rem; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 4px; }
+    .tool-title { font-size: 1rem; font-weight: 700; margin-bottom: 10px; }
+    .tool-score { font-size: 1.65rem; font-weight: 800; margin-bottom: 6px; }
+    .tool-detail { font-size: 0.8rem; color: var(--muted); margin-bottom: 10px; }
+
+    /* FINAL CONSENSUS BANNER */
+    .consensus-banner {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+      border: 2px solid var(--border); border-radius: 14px; padding: 22px;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 16px; margin-bottom: 22px;
+    }
+    .consensus-verdict { font-size: 2rem; font-weight: 800; margin: 4px 0; }
+    .badge {
+      display: inline-block; padding: 6px 14px; border-radius: 999px;
+      font-weight: 800; font-size: 0.85rem; background: #334155; color: #fff;
+    }
+    .bg-FRESH { background: var(--fresh) !important; color: #052e16 !important; }
+    .bg-SEMI { background: var(--semi) !important; color: #451a03 !important; }
+    .bg-DEGRADED { background: var(--degraded) !important; color: #fff !important; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-size: 0.76rem; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>LUBRITORQUE MULTI-TOOL DIAGNOSTICS</h1>
+      <p>100-Sample Dataset Training (Mode 1) + Unknown Sample Degradation % & 3-Model Optical Fusion (Mode 2)</p>
+    </div>
+    <div class="status-group">
+      <div class="pill"><span class="dot" id="motorDot"></span> Motor: <strong id="motorStateText">IDLE</strong></div>
+      <div class="pill" id="dbStatus">● Connecting...</div>
+    </div>
+  </div>
+
+  <!-- ROW 1: TOOL 1 (MODE 1 TRAINING & MODE 2 PREDICTION) + TOOLS 2-4 (OPTICAL) -->
+  <div class="grid-2">
+
+    <!-- LEFT: TOOL 1 -->
+    <div class="card" style="margin-bottom:0;">
+      <h2>
+        <span>Tool 1: ESP32 Spreader Rig (1-Rotation)</span>
+        <button class="btn-clear" onclick="resetTrainingDataset()">Reset Training (0/100)</button>
+      </h2>
+
+      <label for="modeSelect">Select Operational Mode</label>
+      <select id="modeSelect" onchange="toggleSampleInput()">
+        <optgroup label="Mode 1: Collect Training Dataset (100 Sets per Class)">
+          <option value="KNOWN_FRESH">Mode 1A: Add Fresh Grease Sample (Target: 100)</option>
+          <option value="KNOWN_SEMI">Mode 1B: Add Semi-Degraded Sample (Target: 100)</option>
+          <option value="KNOWN_DEGRADED">Mode 1C: Add Fully Degraded Sample (Target: 100)</option>
+        </optgroup>
+        <optgroup label="Mode 2: Predict Unknown Grease Sample">
+          <option value="TEST_UNKNOWN" selected>Mode 2: Test Unknown Sample & Compute Degradation %</option>
+        </optgroup>
+      </select>
+
+      <div id="sampleInputWrap">
+        <label for="sampleName">Unknown Sample Name / ID</label>
+        <input type="text" id="sampleName" placeholder="e.g., Unknown_Sample_01" />
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-start" onclick="sendMotorCommand('START')">▶ RUN 1-ROTATION MEASUREMENT</button>
+        <button class="btn-stop" onclick="sendMotorCommand('STOP')">■ STOP MOTOR</button>
+      </div>
+
+      <!-- MODE 1 TRAINING PROGRESS (100 SETS EACH) -->
+      <div style="margin-top: 10px;">
+        <label>Mode 1 Training Dataset Progress (100 Viscosity Sets / Class)</label>
+
+        <div class="train-box">
+          <div class="train-top">
+            <span><strong style="color:var(--fresh);">Fresh Set:</strong> <span id="calFreshCount">0 / 100</span></span>
+            <span id="calFreshMean">Mean: -- cP</span>
+          </div>
+          <div class="bar-bg"><div class="bar-fill" id="barFresh" style="background:var(--fresh);"></div></div>
+        </div>
+
+        <div class="train-box">
+          <div class="train-top">
+            <span><strong style="color:var(--semi);">Semi-Degraded Set:</strong> <span id="calSemiCount">0 / 100</span></span>
+            <span id="calSemiMean">Mean: -- cP</span>
+          </div>
+          <div class="bar-bg"><div class="bar-fill" id="barSemi" style="background:var(--semi);"></div></div>
+        </div>
+
+        <div class="train-box">
+          <div class="train-top">
+            <span><strong style="color:var(--degraded);">Degraded Set:</strong> <span id="calDegCount">0 / 100</span></span>
+            <span id="calDegMean">Mean: -- cP</span>
+          </div>
+          <div class="bar-bg"><div class="bar-fill" id="barDeg" style="background:var(--degraded);"></div></div>
+        </div>
+
+        <div class="thresh-banner">
+          <span><strong>Fresh ↔ Semi Cutoff:</strong> <span id="threshFS">-- cP</span></span>
+          <span><strong>Semi ↔ Degraded Cutoff:</strong> <span id="threshSD">-- cP</span></span>
+          <span><strong>K-Factor:</strong> <span id="calKVal">1.000</span></span>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-box"><div class="lbl">Sample Viscosity</div><div class="val" id="valVisc">-- cP</div></div>
+        <div class="metric-box"><div class="lbl">Motor RPM</div><div class="val" id="valRpm">--</div></div>
+        <div class="metric-box"><div class="lbl">1-Rev Time</div><div class="val" id="valTime">-- s</div></div>
+        <div class="metric-box"><div class="lbl">Voltage</div><div class="val" id="valVolt">0.00 V</div></div>
+        <div class="metric-box"><div class="lbl">Current</div><div class="val" id="valCurr">0.000 A</div></div>
+        <div class="metric-box"><div class="lbl">Power</div><div class="val" id="valPwr">0.00 W</div></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: TOOLS 2, 3, 4 (PHONE CAMERA) -->
+    <div class="card" style="margin-bottom:0;">
+      <h2><span>Tools 2–4: Phone Camera Optical Analyzer</span><span style="font-size:0.8rem;">3 VISION MODELS</span></h2>
+
+      <p style="color:var(--muted); font-size:0.88rem; margin-top:0;">
+        Capture a close-up photo of the unknown grease sample from your phone camera to analyze color oxidation, surface sheen/texture, and efficientnetb3 alongside Tool 1.
+      </p>
+
+      <div class="upload-zone">
+        <label for="greasePhotoInput" class="file-btn">📷 Capture Phone Photo / Upload Grease Image</label>
+        <input type="file" id="greasePhotoInput" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoUpload(event)">
+        <div style="font-size:0.8rem; color:var(--muted); margin-top:8px;" id="photoStatusText">No image captured in this session</div>
+        <img id="photoPreview" alt="Grease preview" />
+        <canvas id="analysisCanvas" style="display:none;"></canvas>
+      </div>
+
+      <div class="calib-item">
+        <span><strong>Model A (CIELAB Colorimetry):</strong> Oxidation & darkening index</span>
+        <span class="pill-state st-no" id="miniM1">WAITING</span>
+      </div>
+      <div class="calib-item">
+        <span><strong>Model B (Texture & Sheen):</strong> Roughness & phase separation</span>
+        <span class="pill-state st-no" id="miniM2">WAITING</span>
+      </div>
+      <div class="calib-item">
+  <span><strong>Model C (Bubble & Void Model):</strong> Air entrapment & micro-voids</span>
+  <span class="pill-state st-no" id="miniM3">WAITING</span>
+</div>
+
+      <button class="btn-save" onclick="saveCombinedFourToolReport()">💾 Save Combined 4-Tool Diagnosis to Database</button>
+    </div>
+  </div>
+
+  <!-- ROW 2: 4-TOOL SIDE-BY-SIDE COMPARISON -->
+  <div class="grid-4">
+    <div class="tool-card">
+      <div>
+        <div class="tool-header">Tool 1 · Mechanical (ESP32)</div>
+        <div class="tool-title">Spreader Viscosity</div>
+        <div class="tool-score" id="t1Score">-- %</div>
+        <div class="tool-detail" id="t1Detail">Awaiting Mode 2 test</div>
+      </div>
+      <div><span class="badge" id="t1Badge">PENDING</span></div>
+    </div>
+
+    <div class="tool-card">
+      <div>
+        <div class="tool-header">Tool 2 · Optical Model 1</div>
+        <div class="tool-title">CIELAB Colorimetry</div>
+        <div class="tool-score" id="t2Score">-- %</div>
+        <div class="tool-detail" id="t2Detail">Awaiting phone photo</div>
+      </div>
+      <div><span class="badge" id="t2Badge">PENDING</span></div>
+    </div>
+
+    <div class="tool-card">
+      <div>
+        <div class="tool-header">Tool 3 · Optical Model 2</div>
+        <div class="tool-title">Texture & Sheen</div>
+        <div class="tool-score" id="t3Score">-- %</div>
+        <div class="tool-detail" id="t3Detail">Awaiting phone photo</div>
+      </div>
+      <div><span class="badge" id="t3Badge">PENDING</span></div>
+    </div>
+
+    <div class="tool-card">
+  <div>
+    <div class="tool-header">Tool 4 · Optical Model 3</div>
+    <div class="tool-title">Bubble & Void Analysis</div>
+    <div class="tool-score" id="t4Score">-- %</div>
+    <div class="tool-detail" id="t4Detail">Awaiting phone photo</div>
+  </div>
+  <div><span class="badge" id="t4Badge">PENDING</span></div>
+</div>
+  </div>
+
+  <!-- ROW 3: FINAL CONSENSUS BANNER -->
+  <div class="consensus-banner" id="consensusBanner">
+    <div>
+      <div style="font-size:0.82rem; color:var(--accent); font-weight:700; text-transform:uppercase; letter-spacing:0.8px;">
+        Final Multi-Tool Consensus Diagnosis (Tools 1 + 2 + 3 + 4)
+      </div>
+      <div class="consensus-verdict" id="finalVerdictText">AWAITING TEST DATA</div>
+      <div style="font-size:0.88rem; color:var(--muted);" id="finalBreakdownText">
+        Train Mode 1 datasets, then run Mode 2 and/or upload a grease photo to get the degradation % and class prediction.
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Overall Degradation Percentage</div>
+      <div style="font-size:2.4rem; font-weight:800;" id="finalScoreText">-- %</div>
+      <span class="badge" id="finalBadge">PENDING</span>
+    </div>
+  </div>
+
+  <!-- ROW 4: CHART & STORED MODE 2 LOGS -->
+  <div class="card">
+    <h2><span>Trained Class Mean Viscosities vs. Current Unknown Sample (cP)</span></h2>
+    <canvas id="viscChart" height="75"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>
+      <span>Mode 2 Unknown Sample Prediction History</span>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-csv" onclick="exportCSV()">Export Mode 2 CSV</button>
+        <button class="btn-clear" onclick="clearPredictionLogs()">Clear Prediction Logs</button>
+      </div>
+    </h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+  <th>ID</th><th>Sample</th><th>Tool 1 (Mech %)</th><th>Tool 2 (Color %)</th>
+  <th>Tool 3 (Texture %)</th><th>Tool 4 (Bubble %)</th><th>Final Consensus</th>
+  <th>Viscosity</th><th>Current</th><th>Power</th>
+</tr>
+        </thead>
+        <tbody id="logsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://ezkwsajhchuwpgumycab.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_y3fPGyRJwKoSjabqLmj2VA_OjTSWli_';
+    const DEVICE_ID = 'LUBRITORQUE_01';
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let calibState = { fresh_visc: 0, semi_visc: 0, degraded_visc: 0 };
+    let logsCache = [];
+    let sessionMode2Run = false;
+    let onnxSessions = null;
+
+    let toolResults = {
+      t1: { active: false, score: 0, label: 'PENDING', raw: null },
+      t2: { active: false, score: 0, label: 'PENDING', detail: '' },
+      t3: { active: false, score: 0, label: 'PENDING', detail: '' },
+      t4: { active: false, score: 0, label: 'PENDING', detail: '' }
+    };
+
+    const chart = new Chart(document.getElementById('viscChart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: ['Fresh Mean (0%)', 'Semi-Degraded Mean (50%)', 'Degraded Mean (100%)', 'Unknown Sample'],
+        datasets: [{
+          data: [0, 0, 0, 0],
+          backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#38bdf8'],
+          borderRadius: 6,
+          barThickness: 42
+        }]
+      },
+      options: {
+        scales: {
+          x: { ticks: { color: '#94a3b8' } },
+          y: { ticks: { color: '#94a3b8' }, beginAtZero: true }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    function classifyScore(score) {
+      if (score <= 33) return 'FRESH';
+      if (score <= 68) return 'SEMI-DEGRADED';
+      return 'DEGRADED';
+    }
+
+    function applyBadgeStyle(el, label) {
+      el.innerText = label;
+      el.className = 'badge';
+      if (label.includes('FRESH')) el.classList.add('bg-FRESH');
+      else if (label.includes('SEMI')) el.classList.add('bg-SEMI');
+      else if (label.includes('DEGRADED')) el.classList.add('bg-DEGRADED');
+    }
+
+    function toggleSampleInput() {
+      const mode = document.getElementById('modeSelect').value;
+      document.getElementById('sampleInputWrap').style.display = (mode === 'TEST_UNKNOWN') ? 'block' : 'none';
+    }
+
+    async function sendMotorCommand(cmd) {
+      const mode = document.getElementById('modeSelect').value;
+      const sampleName = document.getElementById('sampleName').value.trim() || 'Unknown_Sample';
+      if (cmd === 'START' && mode === 'TEST_UNKNOWN') {
+        sessionMode2Run = true;
+      }
+
+      const { error } = await db
+        .from('device_control')
+        .update({ command: cmd, mode: mode, sample_name: sampleName, updated_at: new Date().toISOString() })
+        .eq('device_id', DEVICE_ID);
+      if (error) alert('Command error: ' + error.message);
+    }
+
+    async function resetTrainingDataset() {
+      if (!confirm('Reset all 100-sample Mode 1 training counts and clear ESP32 flash memory?')) return;
+
+      await db.from('training_dataset').delete().neq('id', 0);
+      await db.from('calibration_profiles').update({
+        fresh_set: false, fresh_count: 0, fresh_rev_time: 0, fresh_visc: 0,
+        semi_set: false, semi_count: 0, semi_rev_time: 0, semi_visc: 0,
+        degraded_set: false, degraded_count: 0, degraded_rev_time: 0, degraded_visc: 0,
+        thresh_fresh_semi: 0, thresh_semi_deg: 0, k_factor: 1.0
+      }).eq('device_id', DEVICE_ID);
+
+      await db.from('device_control').update({ command: 'RESET_TRAINING' }).eq('device_id', DEVICE_ID);
+      syncAll();
+    }
+
+    // ============================================================
+    // ONNX RUNTIME WEB (COLOR + 445-FEATURE TEXTURE RF + EFFNET-B3)
+    // ============================================================
+    // Point ONNX Runtime Web to CDN for its .wasm backend files
+// Point ONNX Runtime Web to CDN for its .wasm backend files
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
+    ort.env.wasm.numThreads = 1;
+
+    async function getOnnxSessions() {
+      if (!onnxSessions) {
+        const loadOne = async (label, path) => {
+          try {
+            return await ort.InferenceSession.create(path, { executionProviders: ['wasm'] });
+          } catch (err) {
+            throw new Error(`${label} (${path}) failed: ${err?.message || String(err)}`);
+          }
+        };
+
+        onnxSessions = {
+          color:   await loadOne('Color Model', './models/color.onnx'),
+          texture: await loadOne('Texture Model', './models/texture.onnx'),
+          bubble:  await loadOne('Bubble Model', './models/bubble.onnx')
+        };
+      }
+      return onnxSessions;
+    }
+
+    // Reliable Photo Upload & Preview Handler
+    function handlePhotoUpload(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      if (!file) return;
+
+      const statusEl = document.getElementById('photoStatusText');
+      if (statusEl) statusEl.innerText = `Loaded "${file.name}" — running optical models...`;
+
+      const img = document.getElementById('photoPreview');
+      const objectUrl = URL.createObjectURL(file);
+
+      // Attach onload BEFORE setting src so cached/fast images never miss the event
+      img.onload = function() {
+        img.style.display = 'inline-block';
+        analyzePhotoWithThreeModels(img);
+        URL.revokeObjectURL(objectUrl);
+      };
+
+      img.onerror = function() {
+        if (statusEl) statusEl.innerText = 'Error reading image file. Please try another photo.';
+      };
+
+      img.src = objectUrl;
+      // Reset input value so selecting the same photo again still triggers onchange
+      input.value = '';
+    }
+
+    // Extract Color (CIELAB/RGB), Texture (GLCM/Gradient), and Bubble/Void features
+// Helper: compute [mean, std, min, max, median, p25, p50, p75] for any Float32Array
+    function arrayStats8(arr) {
+      const n = arr.length;
+      if (n === 0) return [0, 0, 0, 0, 0, 0, 0, 0];
+      let sum = 0, min = Infinity, max = -Infinity;
+      for (let i = 0; i < n; i++) {
+        const v = arr[i];
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      const mean = sum / n;
+      let varSum = 0;
+      for (let i = 0; i < n; i++) varSum += (arr[i] - mean) ** 2;
+      const std = Math.sqrt(varSum / n);
+
+      const s = Float32Array.from(arr).sort();
+      const p25 = s[Math.floor(n * 0.25)];
+      const p50 = s[Math.floor(n * 0.50)];
+      const p75 = s[Math.floor(n * 0.75)];
+      return [mean, std, min, max, p50, p25, p50, p75];
+    }
+
+    // 1. Bubble Segmentation (Connected Components on specular/entrapped air highlights)
+    function extractBubble4Features(gray255, size) {
+      const total = size * size;
+      // Adaptive threshold: mean + 1.5 * std (clamped to [160, 240])
+      let sum = 0;
+      for (let i = 0; i < total; i++) sum += gray255[i];
+      const mean = sum / total;
+      let vSum = 0;
+      for (let i = 0; i < total; i++) vSum += (gray255[i] - mean) ** 2;
+      const thresh = Math.min(240, Math.max(160, mean + 1.5 * Math.sqrt(vSum / total)));
+
+      const mask = new Uint8Array(total);
+      for (let i = 0; i < total; i++) mask[i] = gray255[i] > thresh ? 1 : 0;
+
+      const visited = new Uint8Array(total);
+      const areas = [];
+      const queue = new Int32Array(total);
+
+      for (let i = 0; i < total; i++) {
+        if (mask[i] && !visited[i]) {
+          let head = 0, tail = 0;
+          queue[tail++] = i;
+          visited[i] = 1;
+          let area = 0;
+
+          while (head < tail) {
+            const idx = queue[head++];
+            area++;
+            const x = idx % size;
+            const y = (idx - x) / size;
+
+            if (x > 0 && mask[idx - 1] && !visited[idx - 1]) { visited[idx - 1] = 1; queue[tail++] = idx - 1; }
+            if (x < size - 1 && mask[idx + 1] && !visited[idx + 1]) { visited[idx + 1] = 1; queue[tail++] = idx + 1; }
+            if (y > 0 && mask[idx - size] && !visited[idx - size]) { visited[idx - size] = 1; queue[tail++] = idx - size; }
+            if (y < size - 1 && mask[idx + size] && !visited[idx + size]) { visited[idx + size] = 1; queue[tail++] = idx + size; }
+          }
+
+          // Filter single-pixel sensor noise and huge glare patches
+          if (area >= 3 && area <= total * 0.15) {
+            areas.push(area);
+          }
+        }
+      }
+
+      if (areas.length === 0) {
+        return { vec: [0, 0, 0, 0], count: 0, density: 0 };
+      }
+
+      areas.sort((a, b) => a - b);
+      const totalArea = areas.reduce((a, b) => a + b, 0);
+      const meanArea = totalArea / areas.length;
+      const medianArea = areas[Math.floor(areas.length / 2)];
+      const density = totalArea / total;
+
+      return {
+        vec: [medianArea, meanArea, totalArea, density],
+        count: areas.length,
+        density
+      };
+    }
+
+    // 2. Exact 82-Feature Extractor for texture_regression_model.pkl
+    function extractTexture82Features(gray255, size) {
+      const total = size * size;
+      const gray01 = new Float32Array(total);
+      for (let i = 0; i < total; i++) gray01[i] = gray255[i] / 255.0;
+
+      // [0..7] Grayscale 8 stats (0-255 scale matching standard uint8 image arrays)
+      const grayStats = arrayStats8(gray255);
+
+      // [8..33] 18-bin Uniform LBP (P=16, R=2) + 8 summary stats
+      const lbpMap = new Float32Array(total);
+      const lbpHist = new Float32Array(18);
+      const P = 16, R = 2;
+      const cosT = new Float32Array(P), sinT = new Float32Array(P);
+      for (let k = 0; k < P; k++) {
+        const theta = (2 * Math.PI * k) / P;
+        cosT[k] = R * Math.cos(theta);
+        sinT[k] = -R * Math.sin(theta);
+      }
+
+      let validLbp = 0;
+      for (let y = R; y < size - R; y++) {
+        for (let x = R; x < size - R; x++) {
+          const c = gray255[y * size + x];
+          let trans = 0, ones = 0, firstBit = 0, prevBit = 0;
+          for (let k = 0; k < P; k++) {
+            const nx = Math.round(x + cosT[k]);
+            const ny = Math.round(y + sinT[k]);
+            const bit = gray255[ny * size + nx] >= c ? 1 : 0;
+            if (k === 0) firstBit = bit;
+            else if (bit !== prevBit) trans++;
+            ones += bit;
+            prevBit = bit;
+          }
+          if (prevBit !== firstBit) trans++;
+          const bin = trans <= 2 ? ones : 17;
+          lbpMap[y * size + x] = bin;
+          lbpHist[bin]++;
+          validLbp++;
+        }
+      }
+      for (let b = 0; b < 18; b++) lbpHist[b] /= (validLbp || 1);
+      const lbpStats = arrayStats8(lbpMap);
+
+      // [34..45] Multi-angle GLCM (0°, 45°, 90°, 135° at 16 gray levels) -> mean & std
+      const levels = 16;
+      const dirs = [[1, 0], [1, -1], [0, 1], [-1, -1]];
+      const metrics = { contrast: [], dissim: [], homog: [], energy: [], corr: [], asm: [] };
+
+      for (const [dx, dy] of dirs) {
+        const glcm = new Float32Array(levels * levels);
+        let pairs = 0;
+        for (let y = 1; y < size - 1; y++) {
+          for (let x = 1; x < size - 1; x++) {
+            const i1 = Math.min(levels - 1, Math.floor((gray255[y * size + x] / 256) * levels));
+            const i2 = Math.min(levels - 1, Math.floor((gray255[(y + dy) * size + (x + dx)] / 256) * levels));
+            glcm[i1 * levels + i2]++;
+            glcm[i2 * levels + i1]++;
+            pairs += 2;
+          }
+        }
+        let c = 0, d = 0, h = 0, a = 0, muI = 0, muJ = 0;
+        for (let i = 0; i < levels; i++) {
+          for (let j = 0; j < levels; j++) {
+            const p = glcm[i * levels + j] / (pairs || 1);
+            c += p * ((i - j) ** 2);
+            d += p * Math.abs(i - j);
+            h += p / (1 + ((i - j) ** 2));
+            a += p * p;
+            muI += i * p;
+            muJ += j * p;
+          }
+        }
+        let sigI = 0, sigJ = 0, corr = 0;
+        for (let i = 0; i < levels; i++) {
+          for (let j = 0; j < levels; j++) {
+            const p = glcm[i * levels + j] / (pairs || 1);
+            sigI += p * ((i - muI) ** 2);
+            sigJ += p * ((j - muJ) ** 2);
+          }
+        }
+        const denom = Math.sqrt(sigI * sigJ) || 1;
+        for (let i = 0; i < levels; i++) {
+          for (let j = 0; j < levels; j++) {
+            const p = glcm[i * levels + j] / (pairs || 1);
+            corr += p * ((i - muI) * (j - muJ)) / denom;
+          }
+        }
+        metrics.contrast.push(c);
+        metrics.dissim.push(d);
+        metrics.homog.push(h);
+        metrics.energy.push(Math.sqrt(a));
+        metrics.corr.push(corr);
+        metrics.asm.push(a);
+      }
+
+      const meanStd = arr => {
+        const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+        const s = Math.sqrt(arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / arr.length);
+        return [m, s];
+      };
+      const glcmFeats = [
+        ...meanStd(metrics.contrast),
+        ...meanStd(metrics.dissim),
+        ...meanStd(metrics.homog),
+        ...meanStd(metrics.energy),
+        ...meanStd(metrics.corr),
+        ...meanStd(metrics.asm)
+      ];
+
+      // [46..54] Sobel 8 stats + sobel_edge_ratio (on normalized 0-1 image like skimage.filters.sobel)
+      const sobelArr = new Float32Array(total);
+      for (let y = 1; y < size - 1; y++) {
+        for (let x = 1; x < size - 1; x++) {
+          const idx = y * size + x;
+          const gx = (
+            -gray01[idx - size - 1] + gray01[idx - size + 1]
+            -2 * gray01[idx - 1]    + 2 * gray01[idx + 1]
+            -gray01[idx + size - 1] + gray01[idx + size + 1]
+          ) * 0.25;
+          const gy = (
+            -gray01[idx - size - 1] - 2 * gray01[idx - size] - gray01[idx - size + 1]
+            +gray01[idx + size - 1] + 2 * gray01[idx + size] + gray01[idx + size + 1]
+          ) * 0.25;
+          sobelArr[idx] = Math.hypot(gx, gy);
+        }
+      }
+      const sobelStats = arrayStats8(sobelArr);
+      const sobelThresh = sobelStats[0] + sobelStats[1];
+      let edgeCnt = 0;
+      for (let i = 0; i < total; i++) if (sobelArr[i] > sobelThresh) edgeCnt++;
+      const sobelEdgeRatio = edgeCnt / total;
+
+      // [55..62] Hessian & [63..70] Sato ridge response (2nd-order derivatives)
+      const hessArr = new Float32Array(total);
+      const satoArr = new Float32Array(total);
+      for (let y = 1; y < size - 1; y++) {
+        for (let x = 1; x < size - 1; x++) {
+          const idx = y * size + x;
+          const dxx = gray01[idx + 1] - 2 * gray01[idx] + gray01[idx - 1];
+          const dyy = gray01[idx + size] - 2 * gray01[idx] + gray01[idx - size];
+          const dxy = 0.25 * (gray01[idx + size + 1] - gray01[idx + size - 1] - gray01[idx - size + 1] + gray01[idx - size - 1]);
+          const trace = dxx + dyy;
+          const disc = Math.sqrt(Math.max(0, ((dxx - dyy) * 0.5) ** 2 + dxy * dxy));
+          const l1 = 0.5 * trace + disc;
+          const l2 = 0.5 * trace - disc;
+          hessArr[idx] = Math.max(Math.abs(l1), Math.abs(l2));
+          satoArr[idx] = Math.max(0, -Math.min(l1, l2));
+        }
+      }
+      const hessStats = arrayStats8(hessArr);
+      const satoStats = arrayStats8(satoArr);
+
+      // [71..81] Multi-Otsu 3-region stats (threshold_1, threshold_2 + region 0, 1, 2 ratio/mean/std)
+      const hist = new Float32Array(256);
+      for (let i = 0; i < total; i++) hist[Math.min(255, Math.floor(gray255[i]))]++;
+      for (let i = 0; i < 256; i++) hist[i] /= total;
+
+      let bestVar = -1, t1 = 85, t2 = 170;
+      let totalMean = 0;
+      for (let i = 0; i < 256; i++) totalMean += i * hist[i];
+
+      for (let a = 10; a < 240; a += 4) {
+        for (let b = a + 10; b < 250; b += 4) {
+          let w0 = 0, m0 = 0, w1 = 0, m1 = 0, w2 = 0, m2 = 0;
+          for (let i = 0; i < a; i++) { w0 += hist[i]; m0 += i * hist[i]; }
+          for (let i = a; i < b; i++) { w1 += hist[i]; m1 += i * hist[i]; }
+          for (let i = b; i < 256; i++) { w2 += hist[i]; m2 += i * hist[i]; }
+          if (w0 > 0 && w1 > 0 && w2 > 0) {
+            m0 /= w0; m1 /= w1; m2 /= w2;
+            const between = w0 * ((m0 - totalMean) ** 2) + w1 * ((m1 - totalMean) ** 2) + w2 * ((m2 - totalMean) ** 2);
+            if (between > bestVar) { bestVar = between; t1 = a; t2 = b; }
+          }
+        }
+      }
+
+      const regStats = (lo, hi, inclusiveHi) => {
+        let cnt = 0, s = 0, sq = 0;
+        for (let i = 0; i < total; i++) {
+          const v = gray255[i];
+          const inReg = inclusiveHi ? (v >= lo && v <= hi) : (v >= lo && v < hi);
+          if (inReg) { cnt++; s += v; sq += v * v; }
+        }
+        const ratio = cnt / total;
+        const mean = cnt > 0 ? s / cnt : 0;
+        const std = cnt > 0 ? Math.sqrt(Math.max(0, (sq / cnt) - mean * mean)) : 0;
+        return [ratio, mean, std];
+      };
+
+      const otsuFeats = [
+        ...regStats(0, t1, false),
+        ...regStats(t1, t2, false),
+        ...regStats(t2, 255, true),
+        t1,
+        t2
+      ];
+
+      // Total = 8 + 18 + 8 + 12 + 9 + 8 + 8 + 11 = 82 exact features
+      return [
+        ...grayStats,
+        ...lbpHist,
+        ...lbpStats,
+        ...glcmFeats,
+        ...sobelStats,
+        sobelEdgeRatio,
+        ...hessStats,
+        ...satoStats,
+        ...otsuFeats
+      ];
+    }
+
+    // Master Feature Extractor for all 3 models
+    function extractAllOpticalFeatures(imgEl) {
+      const canvas = document.getElementById('analysisCanvas');
+      const ctx = canvas.getContext('2d');
+      const size = 224;
+      canvas.width = size;
+      canvas.height = size;
+      ctx.drawImage(imgEl, 0, 0, size, size);
+
+      const { data } = ctx.getImageData(0, 0, size, size);
+      const total = size * size;
+      const gray255 = new Float32Array(total);
+      let lSum = 0, aSum = 0, bLabSum = 0;
+
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const r8 = data[i], g8 = data[i + 1], b8 = data[i + 2];
+        gray255[p] = 0.299 * r8 + 0.587 * g8 + 0.114 * b8;
+
+        let r = r8 / 255.0, g = g8 / 255.0, b = b8 / 255.0;
+        r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+        g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+        b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+
+        const x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+        const y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1.00000;
+        const z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+
+        const fx = x > 0.008856 ? Math.cbrt(x) : (7.787 * x) + (16 / 116);
+        const fy = y > 0.008856 ? Math.cbrt(y) : (7.787 * y) + (16 / 116);
+        const fz = z > 0.008856 ? Math.cbrt(z) : (7.787 * z) + (16 / 116);
+
+        lSum += (116 * fy) - 16;
+        aSum += 500 * (fx - fy);
+        bLabSum += 200 * (fy - fz);
+      }
+
+      const lab = [lSum / total, aSum / total, bLabSum / total];
+      const tex82 = extractTexture82Features(gray255, size);
+      const bub4 = extractBubble4Features(gray255, size);
+
+      return {
+        lab,
+        colorPool: lab,
+        texturePool: tex82,
+        bubblePool: bub4.vec,
+        bubbleMeta: `Bubbles: ${bub4.count} · Density: ${(bub4.density * 100).toFixed(2)}%`
+      };
+    }
+
+    function buildMatchedTensor(session, featurePool, fallbackDim = 3) {
+      const inName = session.inputNames[0];
+      const expectedDim = Number(session.inputMetadata?.[inName]?.dimensions?.[1]) || fallbackDim;
+      const vec = new Float32Array(expectedDim);
+      for (let i = 0; i < expectedDim; i++) {
+        vec[i] = featurePool[i % featurePool.length];
+      }
+      return new ort.Tensor('float32', vec, [1, expectedDim]);
+    }
+
+    function parseAnySklearnOnnx(session, outMap, customDetail = '') {
+      const classes = ['FRESH', 'SEMI-DEGRADED', 'DEGRADED'];
+
+      if (session.outputNames.length >= 2 && outMap[session.outputNames[1]]?.data?.length >= 3) {
+        const probs = Array.from(outMap[session.outputNames[1]].data);
+        const idx = probs.indexOf(Math.max(...probs));
+        const score = (probs[1] * 50.0) + (probs[2] * 100.0);
+        return {
+          label: classes[idx],
+          score,
+          detail: customDetail || `${classes[idx]} (${(probs[idx] * 100).toFixed(1)}% conf)`
+        };
+      }
+
+      const rawVal = Number(outMap[session.outputNames[0]].data[0]);
+      let score = Math.abs(rawVal) <= 1.5 ? rawVal * 100.0 : rawVal;
+      score = Math.min(100, Math.max(0, score));
+      return {
+        label: classifyScore(score),
+        score,
+        detail: customDetail || `Score: ${score.toFixed(1)}%`
+      };
+    }
+
+    async function runModel(session, pool, exactDim, detailOverride = '') {
+      const inName = session.inputNames[0];
+      const vec = new Float32Array(exactDim);
+      for (let i = 0; i < exactDim; i++) {
+        vec[i] = pool[i % pool.length];
+      }
+      const tensor = new ort.Tensor('float32', vec, [1, exactDim]);
+      const out = await session.run({ [inName]: tensor });
+      return parseAnySklearnOnnx(session, out, detailOverride);
+    }
+
+    async function analyzePhotoWithThreeModels(imgEl) {
+      document.getElementById('photoStatusText').innerText = 'Running color.onnx, texture.onnx & bubble.onnx...';
+
+      let s;
+      try {
+        s = await getOnnxSessions();
+      } catch (loadErr) {
+        console.error('ONNX Load Error:', loadErr);
+        document.getElementById('photoStatusText').innerText = loadErr.message;
+        return;
+      }
+
+      const feats = extractAllOpticalFeatures(imgEl);
+
+      const runModel = async (session, pool, fallbackDim, detailOverride = '') => {
+        const tensor = buildMatchedTensor(session, pool, fallbackDim);
+        const out = await session.run({ [session.inputNames[0]]: tensor });
+        return parseAnySklearnOnnx(session, out, detailOverride);
+      };
+
+      // Tool 2: Color Model (color.onnx -> 3 features)
+      try {
+        const cRes = await runModel(
+          s.color,
+          feats.colorPool,
+          3,
+          `L*=${feats.lab[0].toFixed(1)}, a*=${feats.lab[1].toFixed(1)}, b*=${feats.lab[2].toFixed(1)}`
+        );
+        toolResults.t2 = { active: true, ...cRes };
+        document.getElementById('t2Score').innerText = cRes.score.toFixed(1) + ' %';
+        document.getElementById('t2Detail').innerText = cRes.detail;
+        applyBadgeStyle(document.getElementById('t2Badge'), cRes.label);
+        const m1 = document.getElementById('miniM1');
+        m1.innerText = `${cRes.label} (${cRes.score.toFixed(0)}%)`;
+        m1.className = 'pill-state st-yes';
+      } catch (e) {
+        document.getElementById('t2Detail').innerText = 'Color error: ' + e.message;
+      }
+
+      // Tool 3: Texture Model (texture.onnx -> 82 features)
+      try {
+        const tRes = await runModel(s.texture, feats.texturePool, 82);
+        toolResults.t3 = { active: true, ...tRes };
+        document.getElementById('t3Score').innerText = tRes.score.toFixed(1) + ' %';
+        document.getElementById('t3Detail').innerText = tRes.detail;
+        applyBadgeStyle(document.getElementById('t3Badge'), tRes.label);
+        const m2 = document.getElementById('miniM2');
+        m2.innerText = `${tRes.label} (${tRes.score.toFixed(0)}%)`;
+        m2.className = 'pill-state st-yes';
+      } catch (e) {
+        document.getElementById('t3Detail').innerText = 'Texture error: ' + e.message;
+      }
+
+      // Tool 4: Bubble Model (bubble.onnx -> 4 exact features)
+      try {
+        const bRes = await runModel(s.bubble, feats.bubblePool, 4, feats.bubbleMeta);
+        toolResults.t4 = { active: true, ...bRes };
+        document.getElementById('t4Score').innerText = bRes.score.toFixed(1) + ' %';
+        document.getElementById('t4Detail').innerText = bRes.detail;
+        applyBadgeStyle(document.getElementById('t4Badge'), bRes.label);
+        const m3 = document.getElementById('miniM3');
+        m3.innerText = `${bRes.label} (${bRes.score.toFixed(0)}%)`;
+        m3.className = 'pill-state st-yes';
+      } catch (e) {
+        document.getElementById('t4Detail').innerText = 'Bubble error: ' + e.message;
+      }
+
+      document.getElementById('photoStatusText').innerText = 'All 3 Optical Models Completed';
+      computeFinalConsensus();
+    }
+
+    function computeFinalConsensus() {
+      const weights = [
+        { tool: toolResults.t1, w: 0.40 },
+        { tool: toolResults.t2, w: 0.25 },
+        { tool: toolResults.t3, w: 0.20 },
+        { tool: toolResults.t4, w: 0.15 }
+      ];
+
+      let wSum = 0, scoreSum = 0, count = 0;
+      weights.forEach(item => {
+        if (item.tool.active) {
+          wSum += item.w;
+          scoreSum += item.tool.score * item.w;
+          count++;
+        }
+      });
+
+      if (count === 0) return null;
+
+      const finalScore = scoreSum / wSum;
+      const finalClass = classifyScore(finalScore);
+
+      document.getElementById('finalScoreText').innerText = finalScore.toFixed(1) + ' %';
+      document.getElementById('finalVerdictText').innerText = finalClass;
+      document.getElementById('finalBreakdownText').innerText =
+        `Fused across ${count} of 4 active tools · Overall Degradation Percentage: ${finalScore.toFixed(1)}%`;
+
+      applyBadgeStyle(document.getElementById('finalBadge'), finalClass);
+
+      const banner = document.getElementById('consensusBanner');
+      if (finalClass === 'FRESH') banner.style.borderColor = '#10b981';
+      else if (finalClass === 'SEMI-DEGRADED') banner.style.borderColor = '#f59e0b';
+      else banner.style.borderColor = '#ef4444';
+
+      return { finalScore, finalClass };
+    }
+
+    async function saveCombinedFourToolReport() {
+      const consensus = computeFinalConsensus();
+      if (!consensus) {
+        alert('Run a Mode 2 test or capture a phone photo first.');
+        return;
+      }
+
+      const sampleName = document.getElementById('sampleName').value.trim() || 'Unknown_Sample';
+      const latestLog = logsCache[0];
+
+      if (sessionMode2Run && latestLog) {
+        await db.from('lubritorque_logs').update({
+          sample_name: sampleName,
+          tool2_color_class: toolResults.t2.label,
+          tool2_color_score: toolResults.t2.score,
+          tool3_texture_class: toolResults.t3.label,
+          tool3_texture_score: toolResults.t3.score,
+          tool4_particle_class: toolResults.t4.label,
+          tool4_particle_score: toolResults.t4.score,
+          final_consensus_class: consensus.finalClass,
+          final_consensus_score: consensus.finalScore
+        }).eq('id', latestLog.id);
+      } else {
+        await db.from('lubritorque_logs').insert({
+          device_id: DEVICE_ID,
+          sample_name: sampleName,
+          mode_type: '4-Tool Fusion',
+          rev_time: 0, rpm: 0, current_avg: 0, voltage: 0, power: 0, viscosity: 0,
+          degradation_score: consensus.finalScore,
+          status: consensus.finalClass,
+          tool2_color_class: toolResults.t2.label,
+          tool2_color_score: toolResults.t2.score,
+          tool3_texture_class: toolResults.t3.label,
+          tool3_texture_score: toolResults.t3.score,
+          tool4_particle_class: toolResults.t4.label,
+          tool4_particle_score: toolResults.t4.score,
+          final_consensus_class: consensus.finalClass,
+          final_consensus_score: consensus.finalScore
+        });
+      }
+      alert('Combined 4-Tool Diagnosis saved!');
+      syncAll();
+    }
+
+    function updateControlUI(row) {
+      if (!row) return;
+      const running = row.motor_running;
+      document.getElementById('motorStateText').innerText = running ? `RUNNING (${row.phase})` : 'IDLE';
+      document.getElementById('motorDot').className = running ? 'dot running' : 'dot';
+
+      document.getElementById('valVolt').innerText = Number(row.live_voltage || 0).toFixed(2) + ' V';
+      document.getElementById('valCurr').innerText = Number(row.live_current || 0).toFixed(3) + ' A';
+      document.getElementById('valPwr').innerText = Number(row.live_power || 0).toFixed(2) + ' W';
+    }
+
+    function updateCalibrationUI(cal) {
+      if (!cal) return;
+      calibState = cal;
+
+      const fCnt = cal.fresh_count || 0;
+      const sCnt = cal.semi_count || 0;
+      const dCnt = cal.degraded_count || 0;
+
+      document.getElementById('calFreshCount').innerText = `${fCnt} / 100`;
+      document.getElementById('calFreshMean').innerText = fCnt > 0 ? `Mean: ${Number(cal.fresh_visc).toFixed(1)} cP` : 'Mean: -- cP';
+      document.getElementById('barFresh').style.width = Math.min(100, fCnt) + '%';
+
+      document.getElementById('calSemiCount').innerText = `${sCnt} / 100`;
+      document.getElementById('calSemiMean').innerText = sCnt > 0 ? `Mean: ${Number(cal.semi_visc).toFixed(1)} cP` : 'Mean: -- cP';
+      document.getElementById('barSemi').style.width = Math.min(100, sCnt) + '%';
+
+      document.getElementById('calDegCount').innerText = `${dCnt} / 100`;
+      document.getElementById('calDegMean').innerText = dCnt > 0 ? `Mean: ${Number(cal.degraded_visc).toFixed(1)} cP` : 'Mean: -- cP';
+      document.getElementById('barDeg').style.width = Math.min(100, dCnt) + '%';
+
+      document.getElementById('threshFS').innerText = cal.thresh_fresh_semi > 0 ? `${Number(cal.thresh_fresh_semi).toFixed(1)} cP` : '-- cP';
+      document.getElementById('threshSD').innerText = cal.thresh_semi_deg > 0 ? `${Number(cal.thresh_semi_deg).toFixed(1)} cP` : '-- cP';
+      document.getElementById('calKVal').innerText = Number(cal.k_factor || 1).toFixed(3);
+
+      refreshChart();
+    }
+
+    function updateLogsUI(rows) {
+      logsCache = rows || [];
+
+      if (sessionMode2Run && logsCache.length > 0 && logsCache[0].rev_time > 0) {
+        const latest = logsCache[0];
+        document.getElementById('valVisc').innerText = Number(latest.viscosity).toFixed(1) + ' cP';
+        document.getElementById('valRpm').innerText = Number(latest.rpm).toFixed(1);
+        document.getElementById('valTime').innerText = Number(latest.rev_time).toFixed(3) + ' s';
+
+        const mechClass = latest.status.includes('FRESH') ? 'FRESH' : (latest.status.includes('SEMI') ? 'SEMI-DEGRADED' : 'DEGRADED');
+        toolResults.t1 = { active: true, score: Number(latest.degradation_score), label: mechClass, raw: latest };
+
+        document.getElementById('t1Score').innerText = Number(latest.degradation_score).toFixed(1) + ' %';
+        document.getElementById('t1Detail').innerText = `${Number(latest.viscosity).toFixed(1)} cP · ${Number(latest.rpm).toFixed(1)} RPM`;
+        applyBadgeStyle(document.getElementById('t1Badge'), mechClass);
+
+        computeFinalConsensus();
+      }
+
+      document.getElementById('logsBody').innerHTML = logsCache.map(r => {
+        const finalClass = (r.final_consensus_class && r.final_consensus_class !== 'PENDING') ? r.final_consensus_class : r.status;
+        const badgeCls = finalClass.includes('FRESH') ? 'bg-FRESH' : (finalClass.includes('SEMI') ? 'bg-SEMI' : 'bg-DEGRADED');
+        return `
+          <tr>
+            <td>#${r.id}</td>
+            <td><strong>${r.sample_name}</strong></td>
+            <td>${r.status} (${Number(r.degradation_score).toFixed(1)}%)</td>
+            <td>${r.tool2_color_class || 'N/A'} (${Number(r.tool2_color_score || 0).toFixed(0)}%)</td>
+            <td>${r.tool3_texture_class || 'N/A'} (${Number(r.tool3_texture_score || 0).toFixed(0)}%)</td>
+            <td>${r.tool4_particle_class || 'N/A'} (${Number(r.tool4_particle_score || 0).toFixed(0)}%)</td>
+            <td><span class="badge ${badgeCls}">${finalClass}</span></td>
+            <td>${Number(r.viscosity).toFixed(1)} cP</td>
+            <td>${Number(r.current_avg).toFixed(3)} A</td>
+            <td>${Number(r.power).toFixed(2)} W</td>
+          </tr>
+        `;
+      }).join('');
+
+      refreshChart();
+    }
+
+    function refreshChart() {
+      const latestVisc = (sessionMode2Run && logsCache.length > 0 && logsCache[0].viscosity > 0)
+        ? Number(logsCache[0].viscosity) : 0;
+
+      chart.data.datasets[0].data = [
+        calibState.fresh_count > 0 ? Number(calibState.fresh_visc) : 0,
+        calibState.semi_count > 0 ? Number(calibState.semi_visc) : 0,
+        calibState.degraded_count > 0 ? Number(calibState.degraded_visc) : 0,
+        latestVisc
+      ];
+      chart.update();
+    }
+
+    async function syncAll() {
+      const [ctrlRes, calRes, logsRes] = await Promise.all([
+        db.from('device_control').select('*').eq('device_id', DEVICE_ID).single(),
+        db.from('calibration_profiles').select('*').eq('device_id', DEVICE_ID).single(),
+        db.from('lubritorque_logs').select('*').order('created_at', { ascending: false }).limit(30)
+      ]);
+      if (ctrlRes.data) updateControlUI(ctrlRes.data);
+      if (calRes.data) updateCalibrationUI(calRes.data);
+      if (logsRes.data) updateLogsUI(logsRes.data);
+    }
+
+    db.channel('lubritorque-100set')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'device_control' }, p => updateControlUI(p.new))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calibration_profiles' }, p => updateCalibrationUI(p.new))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lubritorque_logs' }, () => syncAll())
+      .subscribe(status => {
+        const el = document.getElementById('dbStatus');
+        el.innerText = (status === 'SUBSCRIBED') ? '● Live Synced' : '● Connected';
+        el.style.color = '#10b981';
+      });
+
+    function exportCSV() {
+      const headers = ['ID,Sample,Tool1_Mech,Tool1_DegPct,Tool2_Color,Tool2_Pct,Tool3_Texture,Tool3_Pct,Tool4_Debris,Tool4_Pct,Final_Consensus,Final_DegPct,Viscosity_cP,Current_A,Power_W'];
+      const rows = logsCache.map(r =>
+        `${r.id},"${r.sample_name}","${r.status}",${r.degradation_score},"${r.tool2_color_class}",${r.tool2_color_score},"${r.tool3_texture_class}",${r.tool3_texture_score},"${r.tool4_particle_class}",${r.tool4_particle_score},"${r.final_consensus_class}",${r.final_consensus_score},${r.viscosity},${r.current_avg},${r.power}`
+      );
+      const blob = new Blob([headers.concat(rows).join('\n')], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'LubriTorque_Mode2_Predictions.csv';
+      a.click();
+    }
+
+    async function clearPredictionLogs() {
+      if (!confirm('Clear all Mode 2 prediction logs from the database?')) return;
+      await db.from('lubritorque_logs').delete().neq('id', 0);
+      syncAll();
+    }
+
+    toggleSampleInput();
+    syncAll();
+    setInterval(syncAll, 2000);
+  </script>
+</body>
+</html>
